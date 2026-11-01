@@ -1,5 +1,6 @@
 import type { ChartData } from '../lib/types';
 import { useState } from 'react';
+import { canSpeak, speakEnglish } from '../lib/speak';
 
 export function Stars({ n }: { n: number }) {
   return (
@@ -10,6 +11,15 @@ export function Stars({ n }: { n: number }) {
         </span>
       ))}
     </span>
+  );
+}
+
+export function SpeakButton({ text, label = '朗讀' }: { text: string; label?: string }) {
+  if (!canSpeak()) return null;
+  return (
+    <button type="button" className="btn tiny ghost" data-testid="speak" onClick={() => speakEnglish(text)}>
+      {label}
+    </button>
   );
 }
 

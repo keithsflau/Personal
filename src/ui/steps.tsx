@@ -442,6 +442,43 @@ function Build({
   );
 }
 
+type Token = { key: string; kind: 'text' | 'blank'; text?: string; node: JSX.Element };
+
+function renderClozeLine(tokens: Token[]): JSX.Element[] {
+  const nodes: JSX.Element[] = [];
+  for (let index = 0; index < tokens.length; index += 1) {
+    const token = tokens[index];
+    const next = tokens[index + 1];
+    const after = tokens[index + 2];
+    if (token.kind === 'text' && next?.kind === 'blank' && (token.text?.length ?? 99) <= 28) {
+      const group = after?.kind === 'text' ? [token, next, after] : [token, next];
+      nodes.push(
+        <span key={token.key} className="cloze-keep">
+          {group.map((item) => (
+            <span key={item.key}>{item.node}</span>
+          ))}
+        </span>,
+      );
+      index += group.length - 1;
+      continue;
+    }
+    if (token.kind === 'blank') {
+      const group = next?.kind === 'text' ? [token, next] : [token];
+      nodes.push(
+        <span key={token.key} className="cloze-keep">
+          {group.map((item) => (
+            <span key={item.key}>{item.node}</span>
+          ))}
+        </span>,
+      );
+      index += group.length - 1;
+      continue;
+    }
+    nodes.push(<span key={token.key}>{token.node}</span>);
+  }
+  return nodes;
+}
+
 function Cloze({
   step,
   seed,
@@ -483,14 +520,14 @@ function Cloze({
     else setHint(step.hint ?? '畫了紅線的空格還要改。');
   }
 
-  const lines: { key: string; node: JSX.Element }[][] = [[]];
+  const lines: Token[][] = [[]];
   let blankIndex = -1;
   step.parts.forEach((part, index) => {
     if (typeof part === 'string') {
       part.split('\n').forEach((chunk, chunkIndex) => {
         if (chunkIndex > 0) lines.push([]);
         if (!chunk) return;
-        lines[lines.length - 1]?.push({ key: `${index}-${chunkIndex}`, node: <span>{chunk}</span> });
+        lines[lines.length - 1]?.push({ key: `${index}-${chunkIndex}`, kind: 'text', text: chunk, node: <span>{chunk}</span> });
       });
       return;
     }
@@ -518,7 +555,7 @@ function Cloze({
         onChange={(event) => setAt(current, event.target.value)}
       />
     );
-    lines[lines.length - 1]?.push({ key: `b-${index}`, node });
+    lines[lines.length - 1]?.push({ key: `b-${index}`, kind: 'blank', node });
   });
 
   return (
@@ -526,11 +563,7 @@ function Cloze({
       <h2 className="prompt">{step.prompt}</h2>
       <div className="cloze">
         {lines.map((line, lineIndex) => (
-          <p key={lineIndex}>
-            {line.map((piece) => (
-              <span key={piece.key}>{piece.node}</span>
-            ))}
-          </p>
+          <p key={lineIndex}>{renderClozeLine(line)}</p>
         ))}
       </div>
       {step.bank && (

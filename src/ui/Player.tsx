@@ -2,33 +2,58 @@ import { useEffect, useRef, useState } from 'react';
 import type { Activity, Detail } from '../lib/types';
 import { activitiesFor } from '../data';
 import { recordScore, starsFor } from '../lib/progress';
-import { Stars } from './bits';
+import { SpeakButton, Stars } from './bits';
 import { StepView } from './steps';
 
-type Summary = { correct: number; total: number; pct: number; reviews: Detail[] };
+type Summary = { correct: number; total: number; pct: number; reviews: Detail[]; missed: number[]; practice: boolean };
 
 export function Player({ activity }: { activity: Activity }) {
   const [round, setRound] = useState(0);
+  const [only, setOnly] = useState<number[] | null>(null);
   const back = activity.unitId === 'daily' ? '#/' : `#/unit/${activity.unitId}`;
-  return <PlayerRun key={`${activity.id}-${round}`} activity={activity} back={back} onReplay={() => setRound((value) => value + 1)} />;
+  const indexes = only ?? activity.steps.map((_, stepIndex) => stepIndex);
+  return (
+    <PlayerRun
+      key={`${activity.id}-${round}-${indexes.join('.')}`}
+      activity={activity}
+      indexes={indexes}
+      practice={only !== null}
+      back={back}
+      onReplay={() => {
+        setOnly(null);
+        setRound((value) => value + 1);
+      }}
+      onMissed={(missed) => {
+        setOnly(missed);
+        setRound((value) => value + 1);
+      }}
+    />
+  );
 }
 
 function PlayerRun({
   activity,
+  indexes,
+  practice,
   back,
   onReplay,
+  onMissed,
 }: {
   activity: Activity;
+  indexes: number[];
+  practice: boolean;
   back: string;
   onReplay: () => void;
+  onMissed: (indexes: number[]) => void;
 }) {
+  const steps = indexes.map((stepIndex) => activity.steps[stepIndex]).filter((item): item is Activity['steps'][number] => Boolean(item));
   const [index, setIndex] = useState(0);
   const [settled, setSettled] = useState<{ firstTry: boolean; detail: Detail } | null>(null);
   const [summary, setSummary] = useState<Summary | null>(null);
   const results = useRef<boolean[]>([]);
   const reviews = useRef<Detail[]>([]);
-  const step = activity.steps[index];
-  const scoredTotal = activity.steps.filter((item) => item.type !== 'info').length;
+  const step = steps[index];
+  const scoredTotal = steps.filter((item) => item.type !== 'info').length;
 
   useEffect(() => {
     window.scrollTo(0, 0);
@@ -39,8 +64,12 @@ function PlayerRun({
   function finish() {
     const correct = results.current.filter(Boolean).length;
     const pct = scoredTotal === 0 ? 0 : Math.round((correct / scoredTotal) * 100);
-    recordScore(activity.id, pct);
-    setSummary({ correct, total: scoredTotal, pct, reviews: [...reviews.current] });
+    if (!practice) recordScore(activity.id, pct);
+    const missed = indexes.filter((original, position) => {
+      const item = activity.steps[original];
+      return Boolean(item && item.type !== 'info' && results.current[position] !== true);
+    });
+    setSummary({ correct, total: scoredTotal, pct, reviews: [...reviews.current], missed, practice });
   }
 
   function advance() {
@@ -49,7 +78,7 @@ function PlayerRun({
       results.current[index] = settled.firstTry;
       if (!settled.firstTry) reviews.current.push(settled.detail);
     }
-    if (index + 1 >= activity.steps.length) {
+    if (index + 1 >= steps.length) {
       finish();
       return;
     }
@@ -72,11 +101,17 @@ function PlayerRun({
         )}
         <p className="kicker">完成</p>
         <h1>{activity.title}</h1>
-        <Stars n={stars} />
-        <p className="score">
-          第一次就答對 {summary.correct} / {summary.total}　·　{summary.pct}%
-        </p>
-        <p>{summaryMessage(summary.pct)}</p>
+        {summary.practice ? (
+          <p className="score">錯題重溫：答對 {summary.correct} / {summary.total}。星星維持原來的紀錄。</p>
+        ) : (
+          <>
+            <Stars n={stars} />
+            <p className="score">
+              第一次就答對 {summary.correct} / {summary.total}　·　{summary.pct}%
+            </p>
+            <p>{summaryMessage(summary.pct)}</p>
+          </>
+        )}
         {summary.reviews.length > 0 && (
           <div className="reviews">
             <h2>再看一次</h2>
@@ -90,7 +125,12 @@ function PlayerRun({
           </div>
         )}
         <div className="actions">
-          <button type="button" className="btn" onClick={onReplay}>
+          {summary.missed.length > 0 && (
+            <button type="button" className="btn" data-testid="retry-missed" onClick={() => onMissed(summary.missed)}>
+              再練錯題
+            </button>
+          )}
+          <button type="button" className={summary.missed.length > 0 ? 'btn ghost' : 'btn'} onClick={onReplay}>
             再練一次
           </button>
           {next && (
@@ -118,18 +158,21 @@ function PlayerRun({
         </div>
       </div>
       <div className="dots" aria-hidden="true">
-        {activity.steps.map((item, dot) => (
+        {steps.map((item, dot) => (
           <i key={`${item.type}-${dot}`} className={dot === index ? 'now' : dot < index ? 'did' : ''} />
         ))}
       </div>
       <p className="progress-note">
-        第 {index + 1} / {activity.steps.length} 步。星星只計算第一次就答對的題目。
+        {practice
+          ? `錯題重溫　第 ${index + 1} / ${steps.length} 題。這輪不改星星。`
+          : `第 ${index + 1} / ${steps.length} 步。星星只計算第一次就答對的題目。`}
       </p>
       {activity.passage && (
         <details className="passage" open>
           <summary>
             {activity.passage.kicker} · {activity.passage.title}
           </summary>
+          <SpeakButton text={activity.passage.paragraphs.join('\n')} label="朗讀文章" />
           {activity.passage.paragraphs.map((paragraph, paragraphIndex) => (
             <p key={paragraphIndex}>{paragraph}</p>
           ))}
@@ -142,7 +185,12 @@ function PlayerRun({
             {step.body.split('\n').map((line, lineIndex) => (
               <p key={lineIndex}>{line || '\u00a0'}</p>
             ))}
-            {step.example && <p className="example">{step.example}</p>}
+            {step.example && (
+              <div className="example-row">
+                <p className="example">{step.example}</p>
+                <SpeakButton text={step.example} label="聽一句" />
+              </div>
+            )}
             <div className="actions">
               <button type="button" className="btn" data-testid="next" onClick={advance}>
                 繼續
@@ -165,7 +213,7 @@ function PlayerRun({
                 {!settled.firstTry && <p>{settled.detail.answer}</p>}
                 <p>{settled.detail.why}</p>
                 <button type="button" className="btn" data-testid="next" onClick={advance}>
-                  {index + 1 >= activity.steps.length ? '完成' : '下一題'}
+                  {index + 1 >= steps.length ? '完成' : '下一題'}
                 </button>
               </div>
             )}
